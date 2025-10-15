@@ -1,145 +1,147 @@
 <#
- RTL8821CU WSL2 Full Setup (AutoDefault v6.7)
- Author: ZNUZHG ONYVXPV
+ RTL8821CU WSL2 FULL SETUP (AutoSelect v10.5)
+ Gelişmiş distro algılama (Türkçe WSL, UTF8 fix, fallback listesi)
+ Author: Znuzhg Onyvxpv
  Date: 2025-10-15
-
- Notes:
-  - Fixed distro name normalization (no WSLError: WSL_E_DISTRO_NOT_FOUND)
-  - Fixed UTF-8 issues in Windows PowerShell
-  - Cleaned usbipd handling and improved logging
 #>
 
 function Assert-Admin {
     $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole] "Administrator")
     if (-not $isAdmin) {
-        Write-Host "⚠️  Bu betiği **Yönetici olarak** çalıştırmalısınız." -ForegroundColor Yellow
-        Write-Host "Sağ tıklayın → 'Yönetici olarak çalıştır (Run as Administrator)'" -ForegroundColor Cyan
+        Write-Host "⚠️  Bu betiği YÖNETİCİ olarak çalıştırmalısınız (Run as Administrator)." -ForegroundColor Yellow
         exit 1
     }
 }
 
-Assert-Admin
-chcp 65001 > $null
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+function Normalize-Name {
+    param($s)
+    if ([string]::IsNullOrWhiteSpace($s)) { return "" }
+    $n = $s.Trim('"', "'", " ", "`t", "`r", "`n")
+    return $n
+}
 
+function Test-RunWsl {
+    param($name)
+    try {
+        $out = & wsl -d "$name" --user root -- echo test_ok 2>$null
+        if ($out -match "test_ok") { return $true }
+    } catch {}
+    return $false
+}
+
+Assert-Admin
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+cmd /c chcp 65001 > $null
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " RTL8821CU WSL2 FULL SETUP (AutoDefault v6.7)" -ForegroundColor Green
+Write-Host " RTL8821CU WSL2 FULL SETUP (AutoSelect v10.5)" -ForegroundColor Green
 Write-Host " Directory: $ScriptDir" -ForegroundColor Cyan
 Write-Host "============================================================`n"
 
-# --- WSL distro tespiti ---
+# --- Yüklü distro listesi ---
+$installed = @()
+try { $installed += (& wsl --list --quiet 2>$null) } catch {}
+$installed = $installed | ForEach-Object { Normalize-Name $_ } | Where-Object { $_ -ne "" }
+
+# --- Online distro listesi (Türkçe/İngilizce destekli) ---
+$online = @()
 try {
-    $distrosRaw = wsl --list --quiet 2>&1
-} catch {
-    Write-Host "❌ WSL çalıştırılamadı. WSL yüklü mü?" -ForegroundColor Red
-    exit 1
+    $raw = & cmd /c "chcp 65001 >nul && wsl -l --online" 2>$null
+    foreach ($line in $raw) {
+        $trim = $line.Trim()
+        if ($trim -match "^(NAME|Aşağıdakiler|---|Geçerli|Kullanarak|^$)") { continue }
+        if ($trim -match '^[A-Za-z0-9._-]+\s+') {
+            $parts = $trim -split '\s{2,}'
+            $name = Normalize-Name $parts[0]
+            $desc = if ($parts.Length -gt 1) { $parts[1].Trim() } else { "" }
+            if ($name -and $desc) {
+                $online += [PSCustomObject]@{ Name = $name; Desc = $desc }
+            }
+        }
+    }
+} catch {}
+
+# --- Eğer hala boşsa fallback listesi kullan ---
+if (-not $online -or $online.Count -eq 0) {
+    Write-Host "⚠️  WSL online listesi alınamadı. Yedek liste kullanılacak." -ForegroundColor Yellow
+    $online = @(
+        [PSCustomObject]@{Name="Ubuntu"; Desc="Ubuntu LTS"},
+        [PSCustomObject]@{Name="Ubuntu-22.04"; Desc="Ubuntu 22.04 LTS"},
+        [PSCustomObject]@{Name="Ubuntu-24.04"; Desc="Ubuntu 24.04 LTS"},
+        [PSCustomObject]@{Name="Debian"; Desc="Debian GNU/Linux"},
+        [PSCustomObject]@{Name="kali-linux"; Desc="Kali Linux Rolling"},
+        [PSCustomObject]@{Name="FedoraLinux-42"; Desc="Fedora Linux"},
+        [PSCustomObject]@{Name="archlinux"; Desc="Arch Linux"},
+        [PSCustomObject]@{Name="openSUSE-Tumbleweed"; Desc="openSUSE Tumbleweed"},
+        [PSCustomObject]@{Name="OracleLinux_9_5"; Desc="Oracle Linux 9.5"}
+    )
 }
 
-if ([string]::IsNullOrWhiteSpace($distrosRaw)) {
-    Write-Host "❌ Hiç WSL dağıtımı bulunamadı." -ForegroundColor Red
-    Write-Host "💡 Yüklemek için: wsl --install -d Ubuntu" -ForegroundColor Cyan
-    exit 1
+# --- Listeyi kullanıcıya göster ---
+Write-Host "Mevcut WSL dağıtımları:" -ForegroundColor Yellow
+for ($i = 0; $i -lt $online.Count; $i++) {
+    $isInstalled = $installed -contains $online[$i].Name
+    $mark = if ($isInstalled) { "[Yüklü]" } else { "[Yüklü Değil]" }
+    Write-Host ("  [{0}] {1,-25} {2}" -f ($i + 1), $online[$i].Name, $mark)
 }
 
-# Try to detect default via verbose (star) first, fallback to first name from quiet list
-$verboseList = (wsl --list --verbose 2>$null)
-$defaultLine = $verboseList | Select-String '^\s*\*' | Select-Object -First 1
-if ($defaultLine) {
-    $selected = ($defaultLine.Line -replace '^\s*\*\s*','').Split()[0]
+# --- Seçim al ---
+$sel = ""
+while ($true) {
+    $sel = Read-Host "Hangi dağıtımı kullanmak istiyorsunuz? (1-$($online.Count))"
+    if ([int]::TryParse($sel, [ref]$null) -and $sel -ge 1 -and $sel -le $online.Count) { break }
+    Write-Host "❌ Geçersiz seçim. Lütfen 1 ile $($online.Count) arasında bir sayı girin." -ForegroundColor Red
+}
+$distro = $online[[int]$sel - 1].Name
+Write-Host "[+] Seçilen dağıtım: $distro" -ForegroundColor Green
+
+# --- Eğer yüklü değilse yükle ---
+if ($installed -notcontains $distro) {
+    Write-Host "[*] $distro yükleniyor..." -ForegroundColor Cyan
+    try {
+        wsl --install -d $distro
+        Write-Host "[+] $distro başarıyla yüklendi." -ForegroundColor Green
+    } catch {
+        Write-Host "❌ $distro yüklenemedi. Manuel kurmanız gerekebilir." -ForegroundColor Red
+        exit 1
+    }
 } else {
-    $selected = ($distrosRaw -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" } | Select-Object -First 1)
+    Write-Host "[=] $distro zaten yüklü." -ForegroundColor Yellow
 }
 
-# --- Normalize distro name ---
-$selected = $selected.Trim().Trim('"').Trim("'")
-$allDistros = (wsl --list --quiet 2>$null | ForEach-Object { $_.Trim() })
-if ($allDistros -notcontains $selected) {
-    $match = $allDistros | Where-Object { $_.ToLower() -eq $selected.ToLower() }
-    if ($match) { $selected = $match }
-}
-
-if (-not $selected) {
-    Write-Host "❌ Varsayılan dağıtım tespit edilemedi." -ForegroundColor Red
+# --- Test et ---
+if (-not (Test-RunWsl -name $distro)) {
+    Write-Host "❌ $distro başlatılamadı." -ForegroundColor Red
     exit 1
 }
 
-Write-Host "[+] Varsayılan dağıtım: $selected" -ForegroundColor Green
-Write-Host "[i] Dağıtım adı doğrulama: '$selected'" -ForegroundColor DarkGray
-wsl --list --quiet | ForEach-Object { Write-Host "  -> '$_'" -ForegroundColor DarkGray }
+# --- Klasör ve dosya işlemleri ---
+$target = "/root/rtl8821cu_wsl_fix"
+Write-Host "`n[*] Dizin oluşturuluyor: $target" -ForegroundColor Cyan
+wsl -d "$distro" --user root -- bash -c "mkdir -p '$target'; chmod 700 '$target'"
 
-# --- windows_prereq kontrolü ---
-$prereqPath = Join-Path $ScriptDir "windows_prereq.ps1"
-if (-not (Test-Path $prereqPath)) {
-    Write-Host "❌ Eksik dosya: windows_prereq.ps1" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "`n[*] windows_prereq.ps1 çalıştırılıyor..."
-& powershell -ExecutionPolicy Bypass -File $prereqPath
-
-# --- Root erişim kontrolü ---
-Write-Host "`n[*] Root erişimi kontrol ediliyor..."
-try {
-    wsl -d $selected --user root -- bash -c "echo ok" | Out-Null
-    Write-Host "[+] Root erişimi onaylandı." -ForegroundColor Green
-} catch {
-    Write-Host "⚠️  Root erişimi sağlanamadı, devam edilsin mi?" -ForegroundColor Yellow
-    $ans = Read-Host "(y/N)"
-    if ($ans.ToLower() -ne "y") { exit 1 }
-}
-
-# --- Dosya aktarımı ---
-$targetPath = "/root/rtl8821cu_wsl_fix"
-wsl -d $selected --user root -- bash -c "mkdir -p '$targetPath'" | Out-Null
 $files = @("rtl8821cu_wsl_fix.sh","ai_helper.py")
 foreach ($f in $files) {
     $src = Join-Path $ScriptDir $f
-    if (-not (Test-Path $src)) { Write-Host "Eksik dosya: $f" -ForegroundColor Red; exit 1 }
-    Write-Host "[*] $f aktarılıyor..."
-    $content = Get-Content -Raw -Encoding UTF8 $src
-    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($content))
-    wsl -d $selected --user root -- bash -c "echo '$b64' | base64 -d > '$targetPath/$f'"
-    if ($f -like "*.sh") {
-        wsl -d $selected --user root -- bash -c "chmod +x '$targetPath/$f'"
+    if (-not (Test-Path $src)) {
+        Write-Host "❌ Eksik dosya: $f" -ForegroundColor Red
+        exit 1
     }
+    Write-Host "[*] $f aktarılıyor..." -ForegroundColor Cyan
+    $data = Get-Content -Raw -Encoding UTF8 $src
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($data))
+    wsl -d "$distro" --user root -- bash -c "echo '$b64' | base64 -d > '$target/$f'; chmod 755 '$target/$f'"
 }
-Write-Host "[+] Dosyalar kopyalandı." -ForegroundColor Green
+Write-Host "[+] Dosyalar aktarıldı." -ForegroundColor Green
 
-# --- İç script çalıştır ---
-$autoFlag = ""
-if ($env:AUTO_YES -eq "1" -or $env:AUTO_YES -eq "true") { $autoFlag = "--auto-yes" }
-Write-Host "`n[*] İç script çalıştırılıyor..."
-wsl -d $selected --user root -- bash -lc "cd '$targetPath' && bash ./rtl8821cu_wsl_fix.sh $autoFlag"
+# --- İç script ---
+Write-Host "`n[*] İç script çalıştırılıyor..." -ForegroundColor Cyan
+wsl -d "$distro" --user root -- bash -c "cd '$target'; bash ./rtl8821cu_wsl_fix.sh"
 
-# --- Realtek USB bağlama ---
-Write-Host "`n[*] Realtek cihazları taranıyor..."
-$usbipdCmd = Get-Command usbipd -ErrorAction SilentlyContinue
-if ($usbipdCmd -and $usbipdCmd.Path) {
-    try {
-        $usbList = & "$($usbipdCmd.Path)" list 2>&1
-        $realtek = $usbList | Where-Object { $_ -match "0bda:c811|0bda:c820|Realtek" }
-        if ($realtek) {
-            $busid = ($realtek -split '\s+')[0]
-            & "$($usbipdCmd.Path)" detach --busid $busid 2>$null | Out-Null
-            Start-Sleep -Seconds 1
-            & "$($usbipdCmd.Path)" attach --busid $busid --wsl | Out-Null
-            Write-Host "[+] Realtek cihaz eklendi: $busid" -ForegroundColor Green
-        } else {
-            Write-Host "⚠️ Realtek cihazı bulunamadı." -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "⚠️ usbipd bulundu ama işlem sırasında hata oluştu." -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "⚠️ usbipd bulunamadı veya PATH içinde değil." -ForegroundColor Yellow
-    Write-Host "💡 Yüklemek için: https://github.com/dorssel/usbipd-win/releases" -ForegroundColor Cyan
-}
-
-# --- Son ---
-Start-Process "wsl.exe" -ArgumentList "-d $selected --user root -- bash"
 Write-Host "`n✅ Kurulum tamamlandı!" -ForegroundColor Green
-Write-Host "Test etmek için WSL içinde şunu çalıştırın:" -ForegroundColor Cyan
-Write-Host "  lsusb && dmesg | tail -n 20" -ForegroundColor Cyan
-Write-Host "  iwconfig || ip a" -ForegroundColor Cyan
+Write-Host "Kontrol için WSL içinde çalıştır:" -ForegroundColor Cyan
+Write-Host "  lsusb ; dmesg | tail -n 20" -ForegroundColor Cyan
+Write-Host "  iwconfig ; ip a" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
