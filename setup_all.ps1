@@ -1,21 +1,20 @@
 <#
- RTL8821CU WSL2 Full Setup (Multi-Distro AutoSafe v6.2)
- Author: ZNUZHG ONYVXPC
- Date: 2025-10-15 (finalized)
+ RTL8821CU WSL2 Full Setup (AutoDefault v6.3)
+ Author: ZNUZHG ONYVXPV
+ Date: 2025-10-15
 
  Notes:
-  - Detects installed WSL distros and picks preferred one (kali-linux, ubuntu, debian, parrot, arch)
-  - Copies rtl8821cu_wsl_fix.sh and ai_helper.py into distro as root using base64 (safe UTF-8)
-  - Runs the inner script as root: wsl -d <distro> --user root -- bash -lc ...
-  - Attaches Realtek USB via usbipd (user must keep a distro shell open for persistent attach)
-  - Optional non-interactive mode: set $env:AUTO_YES = "1"
+  - Works regardless of system language (Turkish/English)
+  - Automatically detects and uses default WSL distro
+  - Copies rtl8821cu_wsl_fix.sh and ai_helper.py safely
+  - Runs script as root and attaches Realtek USB via usbipd
 #>
 
 function Assert-Admin {
     $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole] "Administrator")
     if (-not $isAdmin) {
-        Write-Host "Please run this script as Administrator." -ForegroundColor Yellow
+        Write-Host "Bu betiği Yönetici olarak çalıştırmalısınız. / Please run this script as Administrator." -ForegroundColor Yellow
         exit 1
     }
 }
@@ -25,85 +24,69 @@ chcp 65001 | Out-Null
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " RTL8821CU WSL2 FULL SETUP (Multi-Distro AutoSafe v6.2)" -ForegroundColor Green
+Write-Host " RTL8821CU WSL2 FULL SETUP (AutoDefault v6.3)" -ForegroundColor Green
 Write-Host " Directory: $ScriptDir" -ForegroundColor Cyan
 Write-Host "============================================================`n"
 
-# Detect installed WSL distros
+# Detect WSL distros
 try {
     $distros = wsl --list --quiet 2>&1
 } catch {
-    Write-Host "Error calling wsl.exe. Is WSL installed and available?" -ForegroundColor Red
+    Write-Host "❌ WSL çalıştırılamadı. WSL yüklü mü? / WSL could not be executed. Is it installed?" -ForegroundColor Red
     exit 1
 }
 
 if ([string]::IsNullOrWhiteSpace($distros)) {
-    Write-Host "No WSL distributions found. Install Kali/Ubuntu/Debian or other distro first." -ForegroundColor Red
+    Write-Host "❌ WSL dağıtımı bulunamadı. Lütfen bir dağıtım (örneğin Ubuntu veya Kali) yükleyin." -ForegroundColor Red
+    Write-Host "💡 Install a Linux distribution first using:  wsl --install -d ubuntu"
     exit 1
 }
 
-$distros = $distros -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
-Write-Host "[*] Installed WSL distributions:"
-$distros | ForEach-Object { Write-Host "   - $_" }
-
-# Preferred distro selection
-$preferredList = @("kali-linux","ubuntu","debian","parrot","arch")
-$selected = $null
-foreach ($p in $preferredList) {
-    $found = $distros | Where-Object { $_ -match [regex]::Escape($p) }
-    if ($found) { $selected = $found[0]; break }
+# Detect default distro (language-independent)
+$defaultLine = wsl --list --verbose 2>$null | Select-String "\*|Varsayılan" | Select-Object -First 1
+if ($defaultLine) {
+    $selected = ($defaultLine -split "\s+")[0]
+} else {
+    # fallback to first distro
+    $selected = ($distros -split "`r?`n")[0]
 }
 
-if (-not $selected) {
-    Write-Host "`nNo preferred distro auto-detected. Choose from the list below:"
-    for ($i=0; $i -lt $distros.Count; $i++) {
-        Write-Host " [$($i+1)] $($distros[$i])"
-    }
-    $sel = Read-Host "Choose distribution (1..$($distros.Count)) [1]"
-    if ([string]::IsNullOrWhiteSpace($sel)) { $sel = "1" }
-    if (-not ($sel -as [int]) -or [int]$sel -lt 1 -or [int]$sel -gt $distros.Count) {
-        Write-Host "Invalid selection." -ForegroundColor Red
-        exit 1
-    }
-    $selected = $distros[[int]$sel - 1]
-}
+Write-Host "[+] Varsayılan dağıtım tespit edildi / Default distro detected: $selected" -ForegroundColor Green
 
-Write-Host "`n[+] Selected distribution: $selected" -ForegroundColor Green
-
-# Check for prerequisite script
+# Check prerequisite
 $prereqPath = Join-Path $ScriptDir "windows_prereq.ps1"
 if (-not (Test-Path $prereqPath)) {
-    Write-Host "Missing windows_prereq.ps1 in script directory: $ScriptDir" -ForegroundColor Red
+    Write-Host "❌ Eksik dosya: windows_prereq.ps1 / Missing file: windows_prereq.ps1" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "`n[*] Running windows_prereq.ps1 (this may install usbipd-win and restart WSL)..."
+Write-Host "`n[*] windows_prereq.ps1 çalıştırılıyor... / Running windows_prereq.ps1..."
 & powershell -ExecutionPolicy Bypass -File $prereqPath
 
-# Ensure distro reachable as root
-Write-Host "`n[*] Ensuring $selected is reachable as root..."
+# Ensure root access
+Write-Host "`n[*] $selected kök erişimi kontrol ediliyor... / Ensuring root access..."
 try {
     wsl -d $selected --user root -- bash -c "echo distro-root-ok" > $null 2>&1
-    Write-Host "[+] $selected reachable as root." -ForegroundColor Green
+    Write-Host "[+] Root erişimi mevcut / Root access verified." -ForegroundColor Green
 } catch {
-    Write-Host "Failed to reach $selected as root. Try running `wsl -d $selected` and configure root user or sudo access." -ForegroundColor Yellow
-    $ans = Read-Host "Continue anyway? (y/N)"
+    Write-Host "⚠️  Root erişimi sağlanamadı. Manuel olarak root kullanıcı oluşturun. / Could not reach root user." -ForegroundColor Yellow
+    $ans = Read-Host "Devam edilsin mi? / Continue anyway? (y/N)"
     if ($ans.ToLower() -ne "y") { exit 1 }
 }
 
-# Copy files to distro
+# Copy files into distro
 $targetPath = "/root/rtl8821cu_wsl_fix"
-Write-Host "`n[*] Creating target directory inside ${selected}: ${targetPath}"
+Write-Host "`n[*] $selected içine dizin oluşturuluyor... / Creating directory inside ${selected}: $targetPath"
 wsl -d $selected --user root -- bash -c "mkdir -p '$targetPath'"
 
 $files = @("rtl8821cu_wsl_fix.sh","ai_helper.py")
 foreach ($f in $files) {
     $src = Join-Path $ScriptDir $f
     if (-not (Test-Path $src)) {
-        Write-Host "Missing file: $f" -ForegroundColor Red
+        Write-Host "❌ Eksik dosya: $f / Missing file: $f" -ForegroundColor Red
         exit 1
     }
-    Write-Host "[*] Encoding & copying $f -> $targetPath/$f"
+    Write-Host "[*] $f dosyası aktarılıyor... / Copying $f ..."
     $content = Get-Content -Raw -Encoding UTF8 $src
     $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($content))
     wsl -d $selected --user root -- bash -c "echo '$b64' | base64 -d > '$targetPath/$f'"
@@ -112,40 +95,37 @@ foreach ($f in $files) {
     }
 }
 
-Write-Host "[+] Files copied successfully to $targetPath" -ForegroundColor Green
+Write-Host "[+] Dosyalar başarıyla kopyalandı. / Files copied successfully." -ForegroundColor Green
 
-# Execute inner script
+# Run fix script
 $autoFlag = ""
 if ($env:AUTO_YES -eq "1" -or $env:AUTO_YES -eq "true") { $autoFlag = "--auto-yes" }
 
-Write-Host "`n[*] Running rtl8821cu_wsl_fix.sh inside ${selected} as root..."
+Write-Host "`n[*] İç script çalıştırılıyor... / Running rtl8821cu_wsl_fix.sh..."
 wsl -d $selected --user root -- bash -lc "cd '$targetPath' && bash ./rtl8821cu_wsl_fix.sh $autoFlag"
 
-# usbipd device attach
-Write-Host "`n[*] Scanning for Realtek USB device via usbipd..."
+# USB attach
+Write-Host "`n[*] Realtek cihazları taranıyor... / Scanning for Realtek USB device..."
 $usbList = & usbipd list 2>&1
 $realtek = $usbList | Where-Object { $_ -match "0bda:c811|0bda:c820|Realtek" }
 
 if (-not $realtek) {
-    Write-Host "No Realtek device detected. Plug it in and run `usbipd.exe list` to get BUSID." -ForegroundColor Yellow
+    Write-Host "⚠️ Realtek aygıtı bulunamadı. / No Realtek device detected." -ForegroundColor Yellow
 } else {
     $busid = ($realtek -split '\s+')[0]
-    Write-Host "[+] Realtek device found: $busid" -ForegroundColor Green
-    Write-Host "[*] Detaching any existing WSL attachment..."
+    Write-Host "[+] Realtek cihaz bulundu: $busid / Device found: $busid" -ForegroundColor Green
     usbipd detach --busid $busid 2>$null | Out-Null
     Start-Sleep -Seconds 1
-    Write-Host "[*] Attaching Realtek to ${selected}..."
     usbipd attach --busid $busid --wsl | Out-Null
-    Write-Host "[+] Realtek adapter attached successfully (or attach attempted)." -ForegroundColor Green
-    Write-Host "Note: Keep a shell open in the distro to keep the device available."
+    Write-Host "[+] Realtek cihaz eklendi / Realtek adapter attached." -ForegroundColor Green
 }
 
-# Open persistent root terminal
-Write-Host "`n[*] Opening a persistent root terminal for verification..."
+# Open root terminal
+Write-Host "`n[*] Doğrulama için terminal açılıyor... / Opening verification shell..."
 Start-Process "wsl.exe" -ArgumentList "-d $selected --user root -- bash"
 
-Write-Host "`n✅ Setup finished for ${selected}." -ForegroundColor Green
-Write-Host "To verify inside distro (in the opened terminal):"
+Write-Host "`n✅ Kurulum tamamlandı. / Setup completed successfully." -ForegroundColor Green
+Write-Host "Komutlar / Verify inside distro:"
 Write-Host "   lsusb && dmesg | tail -n 20"
 Write-Host "   iwconfig || ip a"
 Write-Host "`n============================================================" -ForegroundColor Cyan
