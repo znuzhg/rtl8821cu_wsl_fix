@@ -1,243 +1,210 @@
-🇹🇷 RTL8821CU WSL2 Otomatik Kurulum ve Onarım Aracı
+RTL8821CU WSL2 Fix — Full Auto Installer (Kali-focused, Multi-distro-ready)
 
-Sürüm: v3.0 — 2025-10-14
-Geliştiriciler: ZNUZHG ONYVXPV
-Proje adı: rtl8821cu_wsl_fix
+Author: ZNUZHG ONYVXPV
+Repo purpose: WSL2 üzerinde Realtek RTL8821CU / 8821CU tabanlı USB Wi-Fi adaptörlerine çalışan sürücü kurulum/onarım aracıdır. Otomatik adımlar, DKMS/make fallback, AI destekli log analizi ve usbipd entegrasyonu içerir.
 
-🎯 Bu araç ne işe yarar?
+Not: Bu araç öncelikle Kali Linux için hazırlanmıştır, ancak setup dosyası ve betikler birkaç basit değişiklikle Debian/Ubuntu/Benzeri dağıtımlarda da çalışacak şekilde tasarlanmıştır. Aşağıda hem Kali-only kullanım hem de multi-distro önerileri bulunur.
 
-Bu proje, Realtek RTL8821CU / RTL8811CU yonga setine sahip USB Wi-Fi adaptörlerinin
-WSL2 (Windows Subsystem for Linux 2) altında tam olarak çalışmasını sağlar.
+İçindekiler
 
-Tool, kurulumu tamamen otomatik hale getirir:
+Ön Koşullar
 
-Windows tarafında gerekli bileşenleri (usbipd, WSL özellikleri) kurar,
+Dosya/Dizin Yapısı
 
-WSL tarafında sürücüyü (rtl8821cu) derleyip yükler,
+Hızlı Başlangıç — Kali (önerilen)
 
-Eksik kernel header’larını otomatik oluşturur,
+Detaylı Kurulum Adımları
 
-Hata durumlarını algılar, gerekirse düzeltir,
+Nasıl Çalışır — Özet
 
-İsteğe bağlı olarak yapay zekâ (GPT) destekli log analizi sunar.
+Logler ve Hata Ayıklama
 
-📂 Dizin Yapısı
-rtl8821cu_wsl_fix/
-├── ai_helper.py              # Yapay zekâ destekli log analiz aracı
-├── openaikeyactivate.sh      # OpenAI API anahtarı yükleyici
-├── rtl8821cu_wsl_fix.sh      # Ana WSL2 kurulum ve onarım aracı
-├── windows_prereq.ps1        # Windows tarafı hazırlık (usbipd, WSL, vb.)
-└── README.md                 # Bu belge
+Sık Karşılaşılan Sorunlar & Çözümleri
 
-⚙️ Gereksinimler
-Platform	Gerekenler
-Windows	Windows 10 / 11 (WSL2 etkin), Yönetici yetkisi
-WSL	Ubuntu, Kali veya Debian tabanlı dağıtım
-Donanım	Realtek RTL8821CU / RTL8811CU Wi-Fi adaptör
-Bağlantı	İnternet (paket indirme ve kernel klonlama için)
-Python	3.7+ (AI log analizi için gerekli)
-🚀 Kurulum Adımları
-🪟 1. Windows Tarafı — windows_prereq.ps1
+Changelog / Sürüm Notları
 
-PowerShell’i Yönetici olarak açın ve aşağıdaki komutları çalıştırın:
+Lisans
 
-Set-ExecutionPolicy Bypass -Scope Process -Force
-cd "C:\Users\<kullanıcı_adınız>\rtl8821cu_wsl_fix"
-.\windows_prereq.ps1
+İletişim / Teşekkürler
 
+Ön Koşullar
 
-Bu script:
+Windows 10/11 ile WSL2 desteği (VirtualMachinePlatform ve WSL özelliği aktif)
 
-usbipd-win yüklü mü kontrol eder, değilse otomatik kurar,
+usbipd-win (Windows tarafında USB over IP sağlayan araç) — windows_prereq.ps1 betiği ile kurulabilir
 
-Gerekli Windows özelliklerini etkinleştirir:
+PowerShell (Yönetici) kullanımı — setup_all.ps1 Run as Administrator ile çalıştırılmalı
 
-Microsoft-Windows-Subsystem-Linux
+WSL dağıtımı: tercihen kali-linux (script Kali-only olarak hazırlanmış); ileride otomatik tespit/çoklu-distro desteği eklenecek
 
-VirtualMachinePlatform
+İnternet bağlantısı (paketler & git repo çekmek için)
 
-Usbip (ve bağlı servisler)
+Dosya / Dizin Yapısı (repo kök)
+rtl8821cu_wsl_fix-main/
+├─ ai_helper.py                 # DKMS/make log analiz ve otomatik onarım aracı (Python)
+├─ rtl8821cu_wsl_fix.sh         # WSL içindeki ana installer / builder (bash)
+├─ setup_all.ps1                # Windows tarafı kontrol & WSL entegrasyon (PowerShell)
+├─ windows_prereq.ps1           # Windows ön-koşul (usbipd-win, winget kontrol vs.)
+├─ README.md                    # (Bu dosya)
+├─ wsl_distro_log.txt           # (setup sırasında oluşturulan geçici log)
+└─ openaikeyactivate.sh         # (opsiyonel/yardımcı)
 
-usbipd servisini başlatır ve otomatik başlatmaya alır,
 
-Son olarak cihazı bağlamak için talimat verir.
+Not: rtl8821cu_wsl_fix.sh ve ai_helper.py WSL içinden çalıştırılmak üzere kopyalanır. setup_all.ps1 bu dosyaları WSL içine güvenli şekilde aktarır.
 
-Eğer winget veya curl eksikse, script manuel yükleme talimatlarını gösterir ve Microsoft’un resmi dökümanına yönlendirir:
-🔗 WSL’de USB cihazı kullanma
+Hızlı Başlangıç — Kali (özet)
 
-💡 Kurulum bitince: Bilgisayarı yeniden başlatmanız veya PowerShell’de
-wsl --shutdown komutunu çalıştırmanız önerilir.
+Windows PowerShell'i Run as Administrator ile aç.
 
-🔌 2. USB Aygıtını WSL2’ye Bağlayın
+Repo dizinine gel:
 
-Windows PowerShell’de:
+cd C:\path\to\rtl8821cu_wsl_fix-main
 
-usbipd wsl list
 
+Setup'ı çalıştır:
 
-Çıktıda Realtek Wi-Fi adaptörünüz görünüyorsa, şu komutla bağlayın:
+.\setup_all.ps1
 
-usbipd wsl attach --busid <BUSID>
 
+Script açılışta Kali yüklü olup olmadığını soracaktır. Yüklü değilse:
 
-(<BUSID> örneğin 1-1 olabilir.)
+wsl --install -d kali-linux
 
-🐧 3. WSL Tarafı — rtl8821cu_wsl_fix.sh
 
-WSL terminalinizi (ör. Ubuntu veya Kali) açın:
+Script WSL içine dosyaları kopyalayıp (root olarak) rtl8821cu_wsl_fix.sh'ı çalıştırır.
 
-cd ~/rtl8821cu_wsl_fix
-chmod +x *.sh ai_helper.py
-sudo ./rtl8821cu_wsl_fix.sh
+Windows tarafında USB cihazını WSL'e bağlamak için:
 
+usbipd.exe list
+usbipd.exe attach --busid <BUSID> --wsl
 
-Script şu adımları tam otomatik yapar:
 
-WSL2 ortamını doğrular.
+Doğrulama (WSL içinde):
 
-Gerekli bağımlılıkları yükler (dkms, git, build-essential, libelf-dev, vb.).
-
-Kernel header eksikse, Microsoft’un WSL kernel’ını indirip make prepare işlemini yapar.
-
-morrownr/8821cu-20210916 sürücü kaynağını klonlar.
-
-DKMS ile modülü derler, kurar ve sisteme ekler.
-
-modprobe 8821cu komutunu çalıştırır ve wlan0 arayüzünü kontrol eder.
-
-Hata oluşursa, ai_helper.py logları analiz eder ve düzeltme önerir.
-
-🤖 4. (İsteğe Bağlı) Yapay Zekâ Log Analizi
-
-AI destekli hata çözümü için:
-
-./openaikeyactivate.sh
-
-
-Anahtarınızı girin (sk- ile başlayan OpenAI API anahtarı).
-Bu sayede derleme hataları otomatik olarak analiz edilir.
-
-🔍 Sorun Giderme (Sık Görülen Hatalar)
-❌ modprobe: FATAL: Module 8821cu not found
-
-Olası nedenler:
-
-DKMS derlemesi başarısız oldu.
-
-Header dosyaları eksik.
-
-Kernel sürümü değişti.
-
-Çözüm:
-
-dkms status
-sudo depmod -a
-sudo modprobe 8821cu
-dmesg | tail -n 40
-
-
-Eğer 8821cu listelenmiyorsa:
-
-sudo dkms remove rtl8821cu/5.12.0.4 --all
-sudo ./rtl8821cu_wsl_fix.sh
-
-⚠️ linux-headers-<sürüm> bulunamadı
-
-WSL çekirdeğinde header paketleri apt üzerinden mevcut değildir.
-Script bunu fark edip otomatik olarak:
-
-git clone https://github.com/microsoft/WSL2-Linux-Kernel.git
-cp Microsoft/config-wsl .config
-make prepare modules_prepare
-ln -sf ~/WSL2-Linux-Kernel /lib/modules/$(uname -r)/build
-
-
-adımlarını uygular.
-
-🔄 usbipd hatası (Windows tarafı)
-
-Eğer cihaz görünmüyorsa:
-
-Get-Service usbipd
-Start-Service usbipd
-usbipd wsl list
-
-
-Hâlâ görünmüyorsa windows_prereq.ps1’i tekrar çalıştırın veya Microsoft dokümanındaki yönergeleri izleyin.
-
-🧠 AI Log Analiz Aracı (ai_helper.py)
-
-Bu araç, sürücü derleme hatalarını OpenAI GPT modeliyle analiz eder.
-Kullanım:
-
-python3 ai_helper.py --log ~/rtl8821cu_logs/dkms_build.log --out analiz.txt
-
-📜 Loglar
-
-Tüm loglar ~/rtl8821cu_logs/ dizinine kaydedilir:
-
-build.log
-
-install.log
-
-dkms_status.log
-
-Hata durumlarında bu dosyaları inceleyebilir veya paylaşabilirsiniz.
-
-💡 Ek Komutlar
-
-Sürücü durumunu kontrol et:
-
-dkms status
-lsmod | grep 8821
-ip a
-
-
-Sürücü elle kaldırmak istersen:
-
-sudo dkms remove rtl8821cu/5.12.0.4 --all
-sudo rm -rf /usr/src/rtl8821cu-5.12.0.4
-
-🧰 Geliştiriciler İçin Notlar
-
-DKMS sürüm adı /usr/src/<paket>-<sürüm> dizin adıyla aynı olmalıdır.
-
-Patch (yama) gerekiyorsa sed veya .patch dosyası olarak düzenlenebilir.
-
-CI/CD sistemlerinde test için WSL imajlarıyla otomatik test yapılabilir.
-
-🕒 Sürüm Geçmişi
-Sürüm	Tarih	Değişiklik
-v3.0	2025-10-14	Tam otomasyon, usbipd kontrolü, kernel header self-fix, AI entegrasyonu
-v2.5	2025-05	Manuel kurulum adımları
-v2.0	2024-12	DKMS entegrasyonu
-v1.0	2024-08	İlk sürüm
-🔐 Güvenlik
-
-Script’ler sudo yetkisiyle çalışır; sadece güvenilir sistemlerde kullanın.
-
-ai_helper.py logları OpenAI API’ye gönderir — özel bilgiler içeren loglarda dikkatli olun.
-
-API anahtarı openai_key.conf veya .bashrc içinde saklanır; gizli tutun.
-
-🧾 Lisans
-
-MIT Lisansı
-© 2025 ZNUZHG ONYVXPV
-
-📬 Destek & Geri Bildirim
-
-Sorularınız ve önerileriniz için GitHub üzerinden issue açabilirsiniz.
-Destek olabilmek için şu bilgileri ekleyin:
-
-uname -r
-
-dkms status
-
-dmesg | tail -n 60
-
+# örn. WSL root shell:
+wsl -d kali-linux --user root -- bash
 lsusb
+dmesg | tail -n 20
+iwconfig || ip a
 
-lsmod | grep 8821
+Detaylı Kurulum Adımları (adım adım)
+1) Windows — gerekli paketler & servis
 
-ip a
+setup_all.ps1 içinde windows_prereq.ps1 çağrılır. Elle yapmak istersen:
+
+winget ve curl kontrolü
+
+usbipd-win yükleme: winget install --id=usbipd-win -e veya Microsoft Store
+
+VirtualMachinePlatform ve WindowsSubsystemForLinux etkinleştirme (gerekirse)
+
+2) WSL restart & default version
+
+Script wsl --shutdown ve wsl --set-default-version 2 gibi komutları çalıştırır.
+
+3) Distro seçimi / Kali özel akış
+
+Mevcut script Kali odaklıdır. Eğer Kali yoksa kullanıcıya yüklemesi söylenir.
+
+İleride multi-distro otomatik seçimi: kali, ubuntu, debian öncelikli olarak algılanır (plan).
+
+4) Dosyaların WSL içine güvenli aktarımı
+
+PowerShell, dosya içeriklerini Base64 ile kodlayıp WSL root içinde açar — encoding hatalarını azaltmak için.
+
+5) WSL içinde derleme & DKMS
+
+rtl8821cu_wsl_fix.sh:
+
+Gerekli paketleri (dkms, build-essential, libelf-dev, libssl-dev, flex, bison, vb.) kontrol eder/kurar.
+
+WSL kernel kaynaklarını (WSL2-Linux-Kernel) hazırlar ve /lib/modules/<kernel>/build linkini verir.
+
+Driver kaynağını klonlar (morrownr/8821cu-20210916) ve DKMS ile derlemeyi dener.
+
+DKMS başarısız olursa:
+
+ai_helper.py log analizini çalıştırır.
+
+make fallback (in-tree module build) dener.
+
+insmod/modprobe adımlarını uygular.
+
+6) usbipd attach
+
+Script usbipd list çıktısını Windows tarafında okur (Windows PowerShell) ve usbipd attach ile adaptörü WSL'e bağlamayı dener. Attach sırasında hedef distro çalışır durumda olmalıdır; script bu amaçla Kali root shell açıp açık bırakır.
+
+Nasıl Çalışır — Teknik Özet
+
+Windows tarafı (setup_all.ps1) WSL dağıtımını root olarak çalıştırılabilir hale getirir, dosyaları Base64 ile WSL'e aktarır ve root shell'i açık bırakır (usbipd attach için).
+
+WSL tarafı (rtl8821cu_wsl_fix.sh) kernel kaynakları hazırlar, DKMS/make ile sürücüyü derler; başarısızlık halinde AI destekli log analizi (ai_helper.py) ile otomatik öneri/eksik paket kurulumunu dener.
+
+Amaç: mümkün olduğu kadar otomatik, minimum kullanıcı müdahalesiyle çalışır hale getirmek.
+
+Logler & Konumlar
+
+Windows tarafı: wsl_distro_log.txt (setup çalıştırıldığında oluşturulur)
+
+WSL tarafı (kök): ~/rtl8821cu_logs/ dizini
+
+dkms_build_<timestamp>.log
+
+make_build_<timestamp>.log
+
+ai_report_<timestamp>.log
+
+Hataları incelerken önce bu log dosyalarını paylaş veya incele.
+
+Sık Karşılaşılan Hatalar & Çözümleri
+There is no WSL 2 distribution running (usbipd attach)
+
+Sebep: usbipd attach çalışırken hedef distro kapalı. Çözüm:
+
+Açık bir WSL shell (root tercihen) bırak.
+
+Veya setup script'in açtığı root terminali açık bırak.
+
+Manuel:
+
+# 1) Open root WSL shell (maintain this window)
+wsl -d kali-linux --user root -- bash
+# 2) Yeni PowerShell penceresinde attach
+usbipd.exe attach --busid 2-13 --wsl
+
+DKMS build ERROR: modpost: "..." undefined!
+
+Genelde Module.symvers eksikliğinden veya kernel kaynaklarıyla eşleşmeme sebebiyle olur.
+
+Çözüm seçenekleri:
+
+ai_helper.py önerilerini uygula (eksik paketleri kurar).
+
+Tam kernel modules derlemesi ile Module.symvers oluştur (ağır işlem).
+
+Önerilen: önce make modules_prepare ile kaynakları hazırlayıp tekrar deneyin. Eğer başarısızsa, özel derlenmiş WSL kernel veya gerçek Linux kernel üzerinde test edin.
+
+base64: invalid input veya dosya bozukluğu
+
+Encoding/decoding sırasında PowerShell konsol kodlaması sebebiyle sorun çıkabilir. setup_all.ps1 UTF-8 (chcp 65001) ile çalıştırılmalı. Eğer sorun devam ederse dosyaları manuel kopyala.
+
+v5.0 — Kali-only, AutoSafe base64 transfer, root-mode, usbipd attach automation
+
+v4.x — AI log analiz, DKMS + make fallback, kernel source prepare
+
+Daha önceki versiyonlarda hata düzeltmeleri ve locale/encoding iyileştirmeleri yapıldı.
+
+Lisans
+
+Bu proje MIT lisansı ile lisanslanmıştır.
+
+Notlar / Güvenlik
+
+Scriptler root hakları ile kernel modülü derlediği için dikkatli olun; değişiklikleri anlamadan çalıştırmak risklidir.
+
+Windows/WSL sürüm farklılıkları derlemeyi etkileyebilir. Loglar ve uname -r bilgisi destek isterken paylaşılması gereken ilk veridir.
+
+Yardım / İletişim
+
+İlk testlerden sonra logları (özellikle ~/rtl8821cu_logs/*) paylaş, uname -r ve lsusb çıktıları ile birlikte yardımcı olabilirim.
+

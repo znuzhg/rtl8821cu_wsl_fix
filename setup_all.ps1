@@ -1,20 +1,22 @@
 ﻿<#
- RTL8821CU WSL2 Full Setup (Kali-only, AutoSafe v5.0)
+ RTL8821CU WSL2 Full Setup (Multi-Distro AutoSafe v6.1)
  Author: ZNUZHG (Mahmut) + GPT Assistant
- Date: 2025-10-15
+ Date: 2025-10-15 (updated)
 
- Changes:
-   ✅ Works only with Kali Linux (no detection)
-   ✅ Always runs as root (no password prompts)
-   ✅ Safe Base64 file transfer
-   ✅ Auto-detach/attach Realtek USB
-   ✅ Opens root Kali terminal automatically
+ Notes:
+  - Detects installed WSL distros and picks preferred one (kali-linux, ubuntu, debian, parrot, arch)
+  - Copies rtl8821cu_wsl_fix.sh and ai_helper.py into distro as root using base64
+  - Runs the inner script as root: wsl -d <distro> --user root -- bash -lc ...
+  - Attaches Realtek USB via usbipd (user must keep a distro shell open for persistent attach)
+  - If you want fully non-interactive heavy actions (like building kernel modules), set environment variable:
+        $env:AUTO_YES = "1"
 #>
 
 function Assert-Admin {
-    $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")
+    $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole] "Administrator")
     if (-not $isAdmin) {
-        Write-Host "⚠️ Please run this script as Administrator." -ForegroundColor Yellow
+        Write-Host "Please run this script as Administrator." -ForegroundColor Yellow
         exit 1
     }
 }
@@ -24,92 +26,129 @@ chcp 65001 | Out-Null
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " RTL8821CU WSL2 FULL SETUP (Kali-only, AutoSafe v5.0)" -ForegroundColor Green
+Write-Host " RTL8821CU WSL2 FULL SETUP (Multi-Distro AutoSafe v6.1)" -ForegroundColor Green
 Write-Host " Directory: $ScriptDir" -ForegroundColor Cyan
 Write-Host "============================================================`n"
 
-# Ask confirmation
-Write-Host "[*] This setup is for Kali Linux WSL only."
-Write-Host "If you have not installed Kali yet, run manually:"
-Write-Host "   wsl --install -d kali-linux`n"
-$answer = Read-Host "Have you already installed Kali Linux? (Y/N)"
-if ($answer.ToLower() -ne "y") {
-    Write-Host "❌ Please install Kali first, then rerun this script."
+# detect installed WSL distros (quiet list)
+try {
+    $distros = wsl --list --quiet 2>&1
+} catch {
+    Write-Host "Error calling wsl.exe. Is WSL installed and available?" -ForegroundColor Red
     exit 1
 }
-Write-Host "[+] Continuing with Kali Linux setup..." -ForegroundColor Green
 
-# --- Step 1: Windows prerequisites ---
+if ([string]::IsNullOrWhiteSpace($distros)) {
+    Write-Host "No WSL distributions found. Install Kali/Ubuntu/Debian or other distro first." -ForegroundColor Red
+    exit 1
+}
+
+$distros = $distros -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+Write-Host "[*] Installed WSL distributions:"
+$distros | ForEach-Object { Write-Host "   - $_" }
+
+# preferred order
+$preferredList = @("kali-linux","ubuntu","debian","parrot","arch")
+$selected = $null
+foreach ($p in $preferredList) {
+    $found = $distros | Where-Object { $_ -match [regex]::Escape($p) }
+    if ($found) { $selected = $found[0]; break }
+}
+
+if (-not $selected) {
+    # ask user to pick
+    Write-Host "`nNo preferred distro auto-detected. Choose from the list below:"
+    for ($i=0; $i -lt $distros.Count; $i++) {
+        Write-Host " [$($i+1)] $($distros[$i])"
+    }
+    $sel = Read-Host "Choose distribution (1..$($distros.Count)) [1]"
+    if ([string]::IsNullOrWhiteSpace($sel)) { $sel = "1" }
+    if (-not ($sel -as [int]) -or [int]$sel -lt 1 -or [int]$sel -gt $distros.Count) {
+        Write-Host "Invalid selection." -ForegroundColor Red
+        exit 1
+    }
+    $selected = $distros[[int]$sel - 1]
+}
+
+Write-Host "`n[+] Selected distribution: $selected" -ForegroundColor Green
+
+# prereq file check
 $prereqPath = Join-Path $ScriptDir "windows_prereq.ps1"
 if (-not (Test-Path $prereqPath)) {
-    Write-Host "❌ Missing file: windows_prereq.ps1" -ForegroundColor Red
+    Write-Host "Missing windows_prereq.ps1 in script directory: $ScriptDir" -ForegroundColor Red
     exit 1
 }
-Write-Host "`n[*] Running windows_prereq.ps1 (this may restart WSL)..."
+
+Write-Host "`n[*] Running windows_prereq.ps1 (this may install usbipd-win and restart WSL)..."
 & powershell -ExecutionPolicy Bypass -File $prereqPath
 
-# --- Step 2: Start Kali as root ---
-Write-Host "`n[*] Starting Kali Linux as root (no password prompt)..."
+# ensure distro reachable as root
+Write-Host "`n[*] Ensuring $selected is reachable as root..."
 try {
-    wsl -d kali-linux --user root -- bash -c "echo Kali root OK"
-    Write-Host "[+] Kali is reachable as root." -ForegroundColor Green
+    wsl -d $selected --user root -- bash -c "echo distro-root-ok" > $null 2>&1
+    Write-Host "[+] $selected reachable as root." -ForegroundColor Green
 } catch {
-    Write-Host "❌ Failed to start Kali. Check WSL installation." -ForegroundColor Red
-    exit 1
+    Write-Host "Failed to reach $selected as root. Try running `wsl -d $selected` and configure root user or set up sudo access." -ForegroundColor Yellow
+    $ans = Read-Host "Continue anyway? (y/N)"
+    if ($ans.ToLower() -ne "y") { exit 1 }
 }
 
-# --- Step 3: Copy files into Kali safely ---
+# copy files via base64 to avoid encoding issues
 $targetPath = "/root/rtl8821cu_wsl_fix"
-Write-Host "`n[*] Creating target directory inside Kali: $targetPath"
-wsl -d kali-linux --user root -- bash -c "mkdir -p '$targetPath'"
+Write-Host "`n[*] Creating target directory inside $selected: $targetPath"
+wsl -d $selected --user root -- bash -c "mkdir -p '$targetPath'"
 
 $files = @("rtl8821cu_wsl_fix.sh","ai_helper.py")
 foreach ($f in $files) {
     $src = Join-Path $ScriptDir $f
     if (-not (Test-Path $src)) {
-        Write-Host "❌ Missing file: $f" -ForegroundColor Red
+        Write-Host "Missing file: $f" -ForegroundColor Red
         exit 1
     }
     Write-Host "[*] Encoding & copying $f -> $targetPath/$f"
-    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -Encoding UTF8 $src)))
-    wsl -d kali-linux --user root -- bash -c "echo '$b64' | base64 -d > '$targetPath/$f'"
+    $content = Get-Content -Raw -Encoding UTF8 $src
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($content))
+    # send base64 string; base64 does not include single-quote so safe to embed in single quotes
+    wsl -d $selected --user root -- bash -c "echo '$b64' | base64 -d > '$targetPath/$f'"
     if ($f -like "*.sh") {
-        wsl -d kali-linux --user root -- bash -c "chmod +x '$targetPath/$f'"
+        wsl -d $selected --user root -- bash -c "chmod +x '$targetPath/$f'"
     }
 }
+
 Write-Host "[+] Files copied successfully to $targetPath" -ForegroundColor Green
 
-# --- Step 4: Run fix script ---
-Write-Host "`n[*] Running rtl8821cu_wsl_fix.sh inside Kali as root..."
-wsl -d kali-linux --user root -- bash -lc "cd '$targetPath' && bash ./rtl8821cu_wsl_fix.sh"
+# run inner script (allow AUTO_YES if set)
+$autoFlag = ""
+if ($env:AUTO_YES -eq "1" -or $env:AUTO_YES -eq "true") { $autoFlag = "--auto-yes" }
 
-# --- Step 5: Auto-manage Realtek USB ---
+Write-Host "`n[*] Running rtl8821cu_wsl_fix.sh inside $selected as root..."
+wsl -d $selected --user root -- bash -lc "cd '$targetPath' && bash ./rtl8821cu_wsl_fix.sh $autoFlag"
+
+# usbipd attach
 Write-Host "`n[*] Scanning for Realtek USB device via usbipd..."
-$usbList = & usbipd list
+$usbList = & usbipd list 2>&1
 $realtek = $usbList | Where-Object { $_ -match "0bda:c811|0bda:c820|Realtek" }
 
 if (-not $realtek) {
-    Write-Host "⚠️ No Realtek device detected. Plug it in and rerun attach step." -ForegroundColor Yellow
+    Write-Host "No Realtek device detected. Plug it in and run `usbipd.exe list` to get BUSID." -ForegroundColor Yellow
 } else {
     $busid = ($realtek -split '\s+')[0]
     Write-Host "[+] Realtek device found: $busid" -ForegroundColor Green
-
-    # auto detach first if already attached
-    Write-Host "[*] Detaching any existing WSL attachment..."
+    Write-Host "[*] Detaching any existing WSL attachment (best effort)..."
     usbipd detach --busid $busid 2>$null | Out-Null
     Start-Sleep -Seconds 1
-
-    Write-Host "[*] Attaching Realtek to Kali..."
+    Write-Host "[*] Attaching Realtek to $selected..."
     usbipd attach --busid $busid --wsl | Out-Null
-    Write-Host "[+] Realtek adapter attached successfully to Kali." -ForegroundColor Green
+    Write-Host "[+] Realtek adapter attached successfully (or attach attempted)." -ForegroundColor Green
+    Write-Host "Note: Keep a shell open in the distro to keep the device available."
 }
 
-# --- Step 6: Open Kali terminal automatically ---
-Write-Host "`n[*] Opening a persistent Kali root terminal for verification..."
-Start-Process "wsl.exe" -ArgumentList "-d kali-linux --user root -- bash"
+# open persistent root terminal
+Write-Host "`n[*] Opening a persistent root terminal for verification..."
+Start-Process "wsl.exe" -ArgumentList "-d $selected --user root -- bash"
 
-Write-Host "`n✅ Setup completed successfully for Kali Linux!" -ForegroundColor Green
-Write-Host "📡 To verify inside Kali (in the opened terminal):"
+Write-Host "`n✅ Setup finished for $selected." -ForegroundColor Green
+Write-Host "To verify inside distro (in the opened terminal):"
 Write-Host "   lsusb && dmesg | tail -n 20"
 Write-Host "   iwconfig || ip a"
 Write-Host "`n============================================================" -ForegroundColor Cyan
