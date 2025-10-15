@@ -1,4 +1,4 @@
-﻿<#
+<#
  RTL8821CU WSL2 Full Setup (Multi-Distro AutoSafe v6.2)
  Author: ZNUZHG ONYVXPC
  Date: 2025-10-15 (finalized)
